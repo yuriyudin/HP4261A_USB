@@ -1,0 +1,128 @@
+
+
+
+#include "HP4261A.h"                       // Including HP4261A pins definitions
+
+int i = 0;   // ~WTGT clock counter (0 to 7)
+int DTBArray[8]; // DTB array is 4 bits x 8
+bool dataReady = false;
+bool busy = false; // Debug only
+bool dataSent = false; // Debug only
+const DTB1Pin = 4; // DTB1 (LSB) is connected to the MCU pin D4
+long LCR = 0;
+long D = 0;
+
+
+void setup()                                                      
+
+
+{
+
+  Serial.begin(9600);           // set up Serial library at 9600 bps
+  Serial.println("HP4261A communication started");
+  attachInterrupt(digitalPinToInterrupt(WTGT_n),captureData,RISING);  //  function for creating external interrupts at pin2 on rising edge (LOW to HIGH)
+  attachInterrupt(digitalPinToInterrupt(FLAG_n),processResults,FALLING);  //  function for creating external interrupts at pin3 on falling edge (LOW to HIGH)   
+
+  
+
+}
+
+
+void loop()                                                      
+
+{  
+   if (dataReady) {
+       Serial.print("LCR: ");
+       Serial.println(LCR);
+       Serial.print("D: ");
+       Serial.println(D);
+       Serial.println("");
+       dataReady = false;
+       dataSent = true;
+   }
+
+}
+
+
+void captureData()           //ISR function executes on ~WTGT falling edge (clock in DTB data)
+
+{  
+
+// <<< DEBUG SECTION
+   if (busy) {
+       Serial.println("ERROR: not enough time to finish processResults()");
+       busy = false;
+   }    
+   if (!dataSent) {
+       Serial.println("ERROR: not enough time to send data");
+       dataSent = true;
+   } 
+// DEBUG SECTION END >>>
+   
+   dataReady = false;
+   dataSent = false;
+   if (i <= 7) {
+       int DTB = 0;
+       int val = 0;
+       for (int j = 0; j <= 3; j++) {
+           val = digitalRead(DTB1Pin + j);
+           DTB = DTB | val << j);
+       }
+       DTBArray[i] = DTB;
+       i++;
+   }
+// <<< DEBUG SECTION   
+   else {
+       Serial.println("ERROR: ~WTGT counter > 8; missed ~FLAG ?");
+   }
+// DEBUG SECTION END >>>
+}
+
+
+void processResults()           //ISR function executes on ~FLAG rising edge (measurement done)                        
+
+{                    
+   busy = true;
+// <<< DEBUG SECTION    
+   if (i < 8) {
+       Serial.println("ERROR: not enough time to finish last DTB capture");
+   }
+// DEBUG SECTION END >>>   
+   
+   //detachInterrupt(digitalPinToInterrupt(WTGT_n));
+   
+   i = 0; // reset ~WTGT clock counter
+   
+   //process LCR data
+   LCR = 0;
+   for (int j = 0; j <= 2; j++) { // DTBArray index loop
+       for (int bit = 0; bit <= 3; bit++) { // bit index loop
+           val = val | (bitRead(DTBArray[j], bit) << bit);
+       }
+       LCR = LCR + val * 10^j;
+   }
+   LCR = LCR + int(!bitRead(DTBArray[3], 0))*1000; // 10^3 digit
+   if (bitRead(DTBArray[3], 1) {
+       LCR = -LCR; // sign
+   }
+   
+   //process Dissipation Factor (D) data   
+   D = 0;
+   for (int j = 4; j <= 7; j++) { // DTBArray index loop
+       for (int bit = 0; bit <= 3; bit++) { // bit index loop
+           val = val | (bitRead(DTBArray[j], bit) << bit);
+       }
+       D = D + val * 10^j;
+   }
+   D = D + int(!bitRead(DTBArray[7], 0))*1000; // 10^3 digit
+   if (bitRead(DTBArray[7], 1) {
+       D = -D; // sign
+   }       
+       
+   //attachInterrupt(digitalPinToInterrupt(WTGT_n),captureData,RISING);
+   busy = false;
+   dataReady = true;       
+       
+}
+
+  
