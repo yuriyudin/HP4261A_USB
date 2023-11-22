@@ -1,0 +1,350 @@
+#include "HP4261A.h"
+#include "Wire.h"
+#include "TCA9555.h"
+#include <CommandParser.h>
+
+
+
+TCA9555 U2(U2_Addr);
+TCA9555 U3(U3_Addr);
+
+// Global Variables
+byte wtgtCounter = 0;   // ~WTGT clock counter (0 to 7)
+byte DTBArray[8]; // DTB data is 8 items x 4 bits wide
+bool dataReady = false;
+bool busy = false; // Debug only
+bool dataSent = false; // Debug only
+bool measurementComplete = false;
+int remoteControls = 0xFFFF;
+
+struct controlData {
+    byte modeVal;
+    byte orVal;
+    byte freqVal;
+    byte fncVal;
+    byte dblankVal;
+    int rngVal;
+    byte lvlVal;    
+};
+controlData controls_rd;
+controlData controls_wr;
+
+struct measData {
+ int data;
+ int polarity;
+};
+measData LCR;
+measData D;
+
+typedef CommandParser<11, 1, 8, 6, 16> MyCommandParser;
+MyCommandParser parser;
+
+
+void setup()                                                      
+{
+  pinMode(LED_GATE, OUTPUT);
+  Serial.begin(115200);
+  Wire.begin();
+  Wire.setClock(400000);
+  U2.begin();
+  U3.begin();
+
+  Serial.println((__FlashStringHelper *)pgm_read_word(&TEXTS[HEADER]));
+  attachInterrupt(digitalPinToInterrupt(WTGT_n),captureData,RISING);
+  attachInterrupt(digitalPinToInterrupt(FLAG_n),processResults,FALLING);
+
+  U3.pinMode16(0x0);
+  U3.write16(remoteControls);
+
+  parser.registerCommand("IDN?", "", &callbackIdn);
+  parser.registerCommand(":HELP", "", &callbackHelp);
+  parser.registerCommand(":SET", "ss", &callbackSetControls);
+
+  // U3.digitalWrite(REM_n, 0); 
+  // U3.digitalWrite(FREQ1K_R, 1); 
+  // U3.digitalWrite(CMA_R, 0); 
+  // U3.digitalWrite(CMB_R, 1);
+  // U3.digitalWrite(FNCA_R, 1); 
+  // U3.digitalWrite(FNCB_R, 0); 
+  // U3.digitalWrite(DRNA_R, 0); 
+  // U3.digitalWrite(DRNB_R, 1); 
+  // U3.digitalWrite(DRNC_R, 1); 
+  // U3.digitalWrite(DRND_R, 0); 
+  // U3.digitalWrite(EXE_n, 0); 
+  // delay(1);
+  // U3.digitalWrite(EXE_n, 1);
+}
+
+
+void loop()                                                      
+{  
+  if (Serial.available()) {
+    char line[16];
+    size_t lineLength = Serial.readBytesUntil('\n', line, 15);
+    line[lineLength] = '\0';
+    for (int i = 0; i < lineLength; i++ ) // convert characters to uppercase
+    {
+      if (((line[i] & 0xDF) >= 'A') && ((line[i] & 0xDF) <= 'Z'))  {
+        line[i] &= 0xDF;
+      }
+    }
+
+    char response[MyCommandParser::MAX_RESPONSE_SIZE];
+    parser.processCommand(line, response);
+    Serial.println(response);
+  }
+
+   if (measurementComplete & !dataSent) {
+
+    // Read instrument controls
+    controls_rd = parseControls(U2.read16()); 
+    busy = false;    
+    dataSent = false; 
+       
+    //Extract LCR data starting at DTBArray index 0 
+    LCR = extractData(0);
+    //Extract D data starting at DTBArray index 4 
+    D = extractData(4);
+            
+    dataReady = true; 
+    printResults();
+    dataSent = true; 
+    digitalWrite(LED_GATE, LOW);
+    // at this point the loop() will idle waiting for the next serial command or measurement data to arrive
+
+   }
+
+}
+
+
+void captureData()
+// This ISR function is called on ~WTGT falling edge. It clocks in DTB data from the HP4261A.
+// There are 8 ~WTGT pulses per each measurement, so this ISR runs 8 times at 250 us intervals.
+// on each ~WTGT pulse we need to capture 4 bits of data (DTB1, DTB2, DTB4, DTB8).
+// At the completion of 8 cycles the DTBArray is fully populated with LCR and D measured data.
+{  
+   measurementComplete = false;
+   dataReady = false;
+   dataSent = false;
+   digitalWrite(LED_GATE, HIGH);
+   
+   if (wtgtCounter <= 7) {
+       int DTB = 0;
+       int val = 0;
+       for (int bit = 0; bit <= 3; bit++) { // loop to read 4 bits
+           val = digitalRead(DTB1 + bit);
+           DTB = DTB | (val << bit);
+       }
+       DTBArray[wtgtCounter] = DTB;
+       wtgtCounter++;
+   }
+//Serial.println("capture complete");
+}
+
+
+void processResults()
+// This ISR function executes on ~FLAG rising edge (measurement done) 
+// The instrument sends the ~FLAG pulse after the completion of the 8 ~WTGT cycles 
+// It is to signalize to the main loop that it can now read the instrument controls,
+// parse the data and send to serial                
+{                    
+   busy = true; 
+   wtgtCounter = 0; // reset ~WTGT clock counter
+
+   measurementComplete = true;  
+//Serial.println("processResults complete");
+}
+
+
+void printResults()
+{
+   //Print Function and Mode
+   //Serial.println("Function/Mode: " + (FUNCTION[controls.fncVal]) + (MODE[controls.modeVal]));
+   Serial.print(((__FlashStringHelper *)pgm_read_word(&TEXTS[3]));
+   Serial.print((__FlashStringHelper *)pgm_read_word(&FUNC_NAMES[controls_rd.fncVal]));
+   Serial.println((__FlashStringHelper *)pgm_read_word(&MODE_NAMES[controls_rd.modeVal])));
+   
+   //Print Measurement Frequency
+   //Serial.print((__FlashStringHelper *)pgm_read_word(&TEXTS[4]));
+   //Serial.println(FREQ[controls.freqVal]);
+   Serial.print(((__FlashStringHelper *)pgm_read_word(&TEXTS[4]));
+   Serial.println((__FlashStringHelper *)pgm_read_word(&FREQ_NAMES[controls_rd.freqVal])));
+   
+   //Print LCR Range
+   Serial.print((__FlashStringHelper *)pgm_read_word(&TEXTS[5]));
+   switch (controls_rd.fncVal) {
+      case 0:
+      //Serial.println(C_RANGE[controls.rngVal]);
+      Serial.println((__FlashStringHelper *)pgm_read_word(&C_RANGE_NAMES[controls_rd.rngVal]));
+      break;
+      case 1:
+      //Serial.println(R_RANGE[controls.rngVal]);
+      Serial.println((__FlashStringHelper *)pgm_read_word(&R_RANGE_NAMES[controls_rd.rngVal]));
+      break;
+      case 3:
+      //Serial.println(L_RANGE[controls.rngVal]);
+       Serial.println((__FlashStringHelper *)pgm_read_word(&L_RANGE_NAMES[controls.rngVal]));
+      break;
+      default:
+      Serial.println((__FlashStringHelper *)pgm_read_word(&C_RANGE_NAMES[0])); // "DEFAULT"
+      break;
+       }
+       
+   // Print LCR Data
+   Serial.print((__FlashStringHelper *)pgm_read_word(&TEXTS[6]));
+   if (LCR.polarity == -1) {
+       Serial.print("-");
+   }
+   Serial.println(LCR.data);
+   // Print Out of Range annunciation
+   if (controls_rd.orVal == 1) {
+      Serial.println((__FlashStringHelper *)pgm_read_word(&GEN_NAMES[GEN_OOR]));
+   }          
+   // Print D Data
+   if (controls_rd.dblankVal == 1) {
+       Serial.print((__FlashStringHelper *)pgm_read_word(&TEXTS[7]));
+       if (D.polarity == -1) {
+           Serial.print("-");
+           }
+        Serial.println(D.data);
+   }
+   // Print divider line
+   Serial.println((__FlashStringHelper *)pgm_read_word(&TEXTS[8]));
+   
+     
+}
+
+controlData parseControls(int value)
+{
+   // Extract instrument controls
+   controlData result;
+   result.modeVal = bitRead(value, CMS);
+   result.orVal = bitRead(value, OR);
+   result.freqVal = bitRead(value, FREQ1K_n);
+   result.fncVal = bitRead(value, FNCA) | (bitRead(value, FNCB) << 1);
+   result.dblankVal = bitRead(value, DBLANK_n);
+   result.rngVal = (bitRead(value, RNGC) | (bitRead(value, RNGB) << 1) | (bitRead(value, RNGA) << 2)) + 1; // "+1" because the range table is 1-based
+   if (((result.fncVal == 0) || (result.fncVal == 3)) && (result.freqVal == 1)) {
+       result.rngVal = result.rngVal + 1; // shift range up for C and L at 120 Hz
+   }
+   if (result.fncVal == 3) {
+       if ((result.freqVal == 0) && (result.rngVal > 7)) {
+           result.rngVal =7; // limit range to 7 for L at 1000 Hz
+       }
+   else if ((result.freqVal == 1) && (result.rngVal > 8)) {
+       result.rngVal = 8; // limit range to 8 for L at 120 Hz
+   }
+   }    
+   return result;
+}
+
+measData extractData(int startIndex)
+{
+   measData result;
+   result.data = 0;
+   int mult = 1;
+   byte temp;
+   for (int j = startIndex; j <= startIndex + 2; j++) { // DTBArray index loop
+       temp = 0; 
+       for (int bit = 0; bit <= 3; bit++) { // bit index loop
+           temp = temp | (int(bitRead(DTBArray[j], bit)) << bit);
+       }
+       result.data = result.data + temp * mult;
+       mult = mult*10;
+   }
+   result.data = result.data + !bitRead(DTBArray[startIndex + 3], 0)*1000; // 10^3 digit
+   if (bitRead(DTBArray[startIndex + 3], 1)) {
+       result.polarity = -1;
+   }
+   else result.polarity = 1;
+   return result;
+}
+
+void callbackIdn(MyCommandParser::Argument *args, char *response) {
+  strlcpy(response, TEXTS[IDN], MyCommandParser::MAX_RESPONSE_SIZE);
+}
+
+void callbackHelp(MyCommandParser::Argument *args, char *response) {
+  Serial.println((__FlashStringHelper *)pgm_read_word(&TEXTS[HELP]));
+}
+
+void callbackSetControls(MyCommandParser::Argument *args, char *response) {
+  //char argument{};
+  //argument = args[0].asString;
+  //strlcpy(response, args[0].asString, MyCommandParser::MAX_RESPONSE_SIZE);
+  //if (strcmp(args[0].asString, "PAR") == 0) Serial.println("parallel ***************************************");
+  
+  // Set Mode
+  if (strcmp(args[0].asString, ARG_NAMES[ARG_MODE]) == 0) {
+      strlcpy(response, TEXTS[9], MyCommandParser::MAX_RESPONSE_SIZE);
+      if (strcmp(args[1].asString, MODE_NAMES[MODE_PAR]) == 0) {
+          controls_wr.modeVal = MODE_PAR;
+      }
+      else if (strcmp(args[1].asString, MODE_NAMES[MODE_SER]) == 0) {
+          controls_wr.modeVal = MODE_SER;
+      }
+      else if (strcmp(args[1].asString, MODE_NAMES[MODE_AUTO]) == 0) {
+          controls_wr.modeVal = MODE_AUTO;
+      }
+      else {// wrong arg value, keep the previous value
+          strlcpy(response, TEXTS[10], MyCommandParser::MAX_RESPONSE_SIZE);
+          }
+      remoteControls = (remoteControls & (~(3 << CMA-R))) | (controls_wr.modeVal << CMA-R);
+      Serial.print(TEXTS[11]); Serial.print(ARG_NAMES[ARG_MODE]); Serial.print(TEXTS[SPACE]); Serial.println(MODE_NAMES[controls_wr.modeVal]);
+  }
+  
+  // Set Frequency
+  else if (strcmp(args[0].asString, ARG_NAMES[ARG_FREQ]) == 0) {
+      strlcpy(response, TEXTS[9], MyCommandParser::MAX_RESPONSE_SIZE);
+      if (strcmp(args[1].asString, FREQ_NAMES[FREQ_1000]) == 0) controls_wr.freqVal = FREQ_1000;
+      else if (strcmp(args[1].asString, FREQ_NAMES[FREQ_120]) == 0) controls_wr.freqVal = FREQ_120;
+      else {// wrong arg value, keep the previous value
+          strlcpy(response, TEXTS[10], MyCommandParser::MAX_RESPONSE_SIZE);
+      }
+      remoteControls = (remoteControls & ~((1 << FREQ1K-R))) | (controls_wr.freqVal << FREQ1K-R);
+      Serial.print(TEXTS[11]); Serial.print(ARG_NAMES[ARG_FREQ]); Serial.print(TEXTS[SPACE]); Serial.println(FREQ_NAMES[controls_wr.freqVal]);
+  }  
+
+
+  // Set Function
+  else if (strcmp(args[0].asString, ARG_NAMES[ARG_FUNC]) == 0) {
+      strlcpy(response, TEXTS[9], MyCommandParser::MAX_RESPONSE_SIZE);
+      if (strcmp(args[1].asString, FUNC_NAMES[FUNC_C]) == 0) controls_wr.fncVal = FUNC_C;
+      else if(strcmp(args[1].asString, FUNC_NAMES[FUNC_R]) == 0) controls_wr.fncVal = FUNC_R;
+      else if(strcmp(args[1].asString, FUNC_NAMES[FUNC_L]) == 0) controls_wr.fncVal = FUNC_L;
+      else {// wrong arg value, keep the previous value
+          strlcpy(response, TEXTS[10], MyCommandParser::MAX_RESPONSE_SIZE);
+      }
+      remoteControls = (remoteControls & ~((3 << FNCA-R))) | (controls_wr.fncVal << FNCA-R);
+      Serial.print(TEXTS[11]); Serial.print(ARG_NAMES[ARG_FUNC]); Serial.print(TEXTS[SPACE]); Serial.println(FREQ_NAMES[controls_wr.fncVal]);
+  }   
+
+
+  // Set Range
+  else if (strcmp(args[0].asString, ARG_NAMES[ARG_RNG]) == 0) {
+      strlcpy(response, TEXTS[9], MyCommandParser::MAX_RESPONSE_SIZE);
+      if (((args[1].asString.toInt() - 1) >= 0) && ((args[1].asString.toInt() - 1) <= 15)) {
+         controls_wr.rngVal = args[1].asString.toInt() - 1; // convert to zero-based range
+         }
+      else {// wrong arg value, keep the previous value
+          strlcpy(response, TEXTS[10], MyCommandParser::MAX_RESPONSE_SIZE);
+      }
+      remoteControls = (remoteControls & ~((3 << DRNA-R))) | (controls_wr.rngVal << DRNA-R);
+      remoteControls = (remoteControls & ~((3 << DRNC-R))) | (controls_wr.rngVal << DRNC-R);
+      Serial.print(TEXTS[11]); Serial.print(ARG_NAMES[ARG_RNG]); Serial.print(TEXTS[SPACE]); 
+      
+      if (controls_wr.fncVal == FUNC_C) {
+          if (controls_wr.freqVal == FREQ_1000)) Serial.println(C_RANGE_NAMES[controls_wr.rngVal]);
+          else Serial.println(C_RANGE_NAMES[controls_wr.rngVal + 1]); // shift range up for C at 120 Hz
+      }
+
+      else if (controls_wr.fncVal == FUNC_L) {
+          if (controls_wr.freqVal == FREQ_1000)) Serial.println(L_RANGE_NAMES[controls_wr.rngVal]);
+          else Serial.println(L_RANGE_NAMES[controls_wr.rngVal + 1]); // shift range up for L at 120 Hz
+      }      
+      else Serial.println(R_RANGE_NAMES[controls_wr.rngVal]);
+  }
+  
+// for debug  
+Serial.println("remoteControls = "); Serial.println(remoteControls, BIN);
+}
