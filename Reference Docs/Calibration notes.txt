@@ -1,0 +1,2 @@
+Open and short calibration ensure that the LCR Meter reads the proper impedance at two extremes: during a virtually zero capacitance (two parallel plates set apart [open calibration]) and during a near zero resistance (two parallel plates in contact [short calibration]).
+It is done to remove stray admittance and residual impedance.
