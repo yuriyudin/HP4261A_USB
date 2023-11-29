@@ -12,3 +12,8 @@ full-wave-rectified waveform to filter.
 For many applications, being able to measure at twice the line frequency and 1 kHz provide enough 
 flexibility. More sophisticated LCR meters include more measurement frequencies, such as 10 kHz, 
 100 kHz, and higher. H
+
+Relative mode
+The relative measurement mode allows a standard part to be measured and then have 
+subsequently-measured parts displayed relative to the standard's value. This makes it easier to 
+compare measured values.
