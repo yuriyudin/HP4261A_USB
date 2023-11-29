@@ -4,3 +4,11 @@ This helps ensure you get the best accuracy from the
 instrument. Manufacturers usually state that the instrument will perform 
 to its specified accuracy only if a proper open/short calibration has been 
 done.
+
+
+The two most popular frequencies for measurement are double the line frequency (i.e., 100 or 120 
+Hz) and 1 kHz. Twice the line frequency is used for filter capacitors and chokes that typically see a 
+full-wave-rectified waveform to filter.
+For many applications, being able to measure at twice the line frequency and 1 kHz provide enough 
+flexibility. More sophisticated LCR meters include more measurement frequencies, such as 10 kHz, 
+100 kHz, and higher. H
