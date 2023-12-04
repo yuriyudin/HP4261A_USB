@@ -1,2 +1,3 @@
 USB controller card for the Hewlett Packard 4261A LCR meter
-With this adapter you can remotely control an HP 4261A LCR meter and expand its functionality to read ESR, Theta, Q.
+This adapter allows an HP 4261A LCR meter to be remotely controlled.
+When combined with a PC application, it allows to expand the meter's functionality to read |Z|, ESR, Theta, Q. Also, it may provide the Short and Open compensation capabilities (TBC).
