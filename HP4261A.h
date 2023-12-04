@@ -99,7 +99,6 @@ const char * const R_RANGE_NAMES[] PROGMEM = {R_RANGE0, R_RANGE1, R_RANGE2, R_RA
 
 
 // Functions
-//const String FUNCTION[] = {"C", "R", "UNDEFINED", "L"};
 #define FUNC_C      0
 #define FUNC_R      1
 #define FUNC_UNDEF  2
